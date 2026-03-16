@@ -1,0 +1,54 @@
+# Task Scheduler XML
+# Save as: C:\)))_Scripts\Startup-Audit-Task.xml  
+# (Then import in Task Scheduler.)
+#
+# This runs the script at logon with highest privileges, in CriticalOnly mode:
+
+# C:\)))_Scripts\Startup-Audit-Task.xml
+#
+#====================== ======================= ==================== =============
+
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Startup Audit - Technician Grade (C:\)))_Scripts\Startup-Audit.ps1)</Description>
+    <Author>LocalAdmin</Author>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <RunLevel>HighestAvailable</RunLevel>
+      <LogonType>InteractiveToken</LogonType>
+      <UserId>S-1-5-32-544</UserId>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-NoProfile -ExecutionPolicy Bypass -File "C:\)))_Scripts\Startup-Audit.ps1" -CriticalOnly</Arguments>
+      <WorkingDirectory>C:\)))_Scripts</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>

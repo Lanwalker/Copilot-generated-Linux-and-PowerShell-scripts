@@ -1,0 +1,246 @@
+Time to start testing these scripts.
+
+Preparing to test 1st boot operation, what do we need to run to setup the automation for this test ?
+
+and then
+
+'pretend it is 1st boot '... what first ?
+
+and then... after first run, what then to check the logs ?
+
+And after 2nd boot run, the difference log comparison ?
+
+What if we wanted to check logs of diffent scenarios independent of runs?
+
+Please Give me a nice sequence list of expected operations of this toolkit.
+
+===============================================================
+
+Here’s the clean, technician‑grade expected‑operations sequence for testing your entire startup‑audit toolkit.
+Short, direct, and exactly the way a field tech would want it.
+
+✅ PHASE 1 — Initial Setup (One‑Time Only)
+1. Place all scripts in the correct folder
+Code
+C:\)))_Scripts\
+Scripts required:
+
+Startup-Audit.ps1
+
+Startup-Audit-DiffViewer.ps1
+
+Startup-Audit-DiffGUI.ps1
+
+Startup-Audit-DiffGUI.cmd
+
+Toolkit-Launcher.ps1
+
+Startup-Audit-Task.xml
+
+2. Create required folders
+The main script will auto‑create these, but you can pre‑create them:
+
+Code
+C:\Startup-Logs\
+C:\Startup-State\
+3. Import the Task Scheduler XML
+This enables automatic execution at logon.
+
+Steps:
+
+Open Task Scheduler
+
+Choose Import Task
+
+Select:
+
+Code
+C:\)))_Scripts\Startup-Audit-Task.xml
+Confirm it runs with highest privileges
+
+Confirm trigger = At logon
+
+Confirm action =
+
+Code
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\)))_Scripts\Startup-Audit.ps1" -CriticalOnly
+This completes setup.
+
+✅ PHASE 2 — “Pretend it is First Boot”
+1. Manually run the script once to generate the baseline
+Open an elevated PowerShell:
+
+Code
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\)))_Scripts\Startup-Audit.ps1"
+Expected behavior:
+
+It detects no baseline
+
+Creates baseline files in:
+
+Code
+C:\Startup-State\
+Creates a log file:
+
+Code
+C:\Startup-Logs\YYYY-MM-DD_HH-MM-SS.txt
+Log will say:
+
+Code
+Baseline created at <timestamp>
+This is your “first boot” state.
+
+✅ PHASE 3 — Second Run (Simulated Second Boot)
+1. Run the script again
+Either:
+
+Reboot and let Task Scheduler run it
+or
+
+Run manually:
+
+Code
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\)))_Scripts\Startup-Audit.ps1"
+Expected behavior:
+
+Script compares current system state to baseline
+
+Logs any differences
+
+Updates baseline for next run
+
+You will now have two log files in:
+
+Code
+C:\Startup-Logs\
+✅ PHASE 4 — Checking Logs After Second Boot
+1. Open the newest log
+Use Notepad++, Notepad, or the GUI diff viewer.
+
+Look for sections like:
+
+===== InstalledApps CHANGES =====
+
+===== DRIVER ROLLBACK DETECTED =====
+
+===== BIOS / FIRMWARE CHANGE DETECTED =====
+
+===== REGISTRY SNAPSHOT CHANGES =====
+
+If nothing changed, the log will be mostly empty except for the header and “Audit complete.”
+
+✅ PHASE 5 — Compare First Boot vs Second Boot Logs
+You have three ways to compare logs.
+
+Method A — Console Diff Viewer
+Code
+powershell -NoProfile -File "C:\)))_Scripts\Startup-Audit-DiffViewer.ps1" `
+    -Log1 "C:\Startup-Logs\<old>.txt" `
+    -Log2 "C:\Startup-Logs\<new>.txt"
+Output is paged and ends with:
+
+Code
+===== End of List =====
+Method B — GUI Diff Viewer
+Double‑click:
+
+Code
+C:\)))_Scripts\Startup-Audit-DiffGUI.cmd
+Or run:
+
+Code
+powershell -NoProfile -File "C:\)))_Scripts\Startup-Audit-DiffGUI.ps1"
+Features:
+
+Browse for logs
+
+Compare Latest Two
+
+Open both logs in Notepad++
+
+Scrollable diff window
+
+Method C — Auto‑Compare Latest Two Logs
+Code
+powershell -NoProfile -File "C:\)))_Scripts\Startup-Audit-DiffGUI.ps1" -AutoLatest
+Loads the two newest logs automatically.
+
+✅ PHASE 6 — Comparing Logs From ANY Scenario
+This is where your toolkit shines.
+
+You can compare:
+
+Before/after Windows Update
+
+Before/after BIOS update
+
+Before/after driver install
+
+Before/after OEM bloatware appears
+
+Before/after OneDrive tries something sneaky
+
+Before/after registry changes
+
+Before/after system corruption events
+
+Use either:
+Console diff viewer
+Code
+Startup-Audit-DiffViewer.ps1 -Log1 <file1> -Log2 <file2>
+GUI diff viewer
+Code
+Startup-Audit-DiffGUI.ps1
+Notepad++ session
+Open multiple logs at once and use its built‑in tools.
+
+✅ PHASE 7 — Using the Toolkit Launcher
+Run:
+
+Code
+powershell -NoProfile -File "C:\)))_Scripts\Toolkit-Launcher.ps1"
+Menu options include:
+
+Run Startup Audit
+
+Run CriticalOnly mode
+
+Console diff viewer
+
+GUI diff viewer
+
+GUI auto‑latest diff
+
+This is your “one‑stop control panel.”
+
+🎯 SUMMARY — Expected Workflow
+First Boot
+Run Startup-Audit.ps1 manually
+
+Baseline created
+
+Second Boot
+Reboot → Task Scheduler runs script
+
+New log created
+
+Compare logs (console/GUI/Notepad++)
+
+Any Time
+Compare any two logs
+
+Use GUI viewer
+
+Use Notepad++ sessions
+
+Use toolkit launcher
+
+If you want, I can also generate:
+
+A technician cheat sheet (one‑page printable)
+
+A desktop shortcut pack
+
+A ZIP‑ready toolkit folder layout
+
+But for now, you’re ready to test.

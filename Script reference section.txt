@@ -1,0 +1,367 @@
+Script reference section.txt
+
+-----------------------------------
+
+Perfect — Option A it is. Short, clean, and all scripts only.  
+Below is the complete bundle, formatted so you can copy/paste each one directly into your toolkit.
+
+Everything follows your header convention:
+
+Code
+File:    C:\)))_Scripts\<name>.ps1
+Purpose: <description>
+And all paths match your folder structure.
+
+✅ 1. MAIN STARTUP‑AUDIT SCRIPT
+File: C:\)))_Scripts\Startup-Audit.ps1
+
+Code
+<#
+    File:    C:\)))_Scripts\Startup-Audit.ps1
+    Purpose: Technician-grade startup change tracker with baseline, diff, registry snapshot,
+             driver rollback detection, firmware change alert, and CriticalOnly mode.
+#>
+
+param(
+    [switch]$CriticalOnly,
+    [switch]$ViewDiff,
+    [string]$Log1,
+    [string]$Log2
+)
+
+$LogRoot   = "C:\Startup-Logs"
+$StateRoot = "C:\Startup-State"
+$RegStateRoot = Join-Path $StateRoot "Registry"
+$Timestamp = (Get-Date).ToString("yyyy-MM-dd_HH-mm-ss")
+$LogFile   = Join-Path $LogRoot "$Timestamp.txt"
+
+New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $StateRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $RegStateRoot | Out-Null
+
+function Save-State { param($Name,$Data) $Data | Out-File -Encoding UTF8 -FilePath (Join-Path $StateRoot "$Name.txt") }
+function Load-State { param($Name) $p = Join-Path $StateRoot "$Name.txt"; if(Test-Path $p){Get-Content $p}else{@()} }
+
+function Save-RegState { param($Name,$Data) $Data | Out-File -Encoding UTF8 -FilePath (Join-Path $RegStateRoot "$Name.txt") }
+function Load-RegState { param($Name) $p = Join-Path $RegStateRoot "$Name.txt"; if(Test-Path $p){Get-Content $p}else{@()} }
+
+function Compare-Section {
+    param($Name,$Old,$New,[switch]$Critical)
+    if($CriticalOnly -and -not $Critical){return}
+    $Diff = Compare-Object $Old $New
+    if($Diff){
+        Add-Content $LogFile "===== $Name CHANGES ====="
+        $Diff | Out-String | Add-Content $LogFile
+        Add-Content $LogFile ""
+    }
+}
+
+if($ViewDiff){
+    if(-not(Test-Path $Log1) -or -not(Test-Path $Log2)){Write-Host "Invalid log paths.";pause;exit}
+    $d = Compare-Object (Get-Content $Log1) (Get-Content $Log2)
+    $d | Out-String | more
+    Write-Host "`n===== End of List ====="
+    pause
+    exit
+}
+
+$Current = @{
+    InstalledApps   = Get-Package | Sort-Object Name | ForEach-Object {"$($_.Name) $($_.Version)"}
+    Drivers         = Get-WmiObject Win32_PnPSignedDriver | Sort-Object DeviceName | ForEach-Object {"$($_.DeviceName) $($_.DriverVersion)"}
+    Services        = Get-Service | Sort-Object Name | ForEach-Object {"$($_.Name) $($_.Status)"}
+    StartupTasks    = Get-CimInstance Win32_StartupCommand | Sort-Object Name | ForEach-Object {"$($_.Name) $($_.Command)"}
+    ScheduledTasks  = Get-ScheduledTask | Sort-Object TaskName | ForEach-Object {"$($_.TaskName) $($_.State)"}
+    WindowsFeatures = Get-WindowsOptionalFeature -Online | Sort-Object FeatureName | ForEach-Object {"$($_.FeatureName) $($_.State)"}
+    Updates         = Get-WmiObject Win32_QuickFixEngineering | Sort-Object HotFixID | ForEach-Object {"$($_.HotFixID) $($_.InstalledOn)"}
+    BIOS            = Get-WmiObject Win32_BIOS | ForEach-Object {"$($_.Manufacturer) $($_.SMBIOSBIOSVersion)"}
+}
+
+function Get-RegistrySnapshot {
+    $snap=@()
+    $run=@("HKLM:\Software\Microsoft\Windows\CurrentVersion\Run","HKCU:\Software\Microsoft\Windows\CurrentVersion\Run")
+    foreach($p in $run){
+        if(Test-Path $p){
+            Get-ItemProperty $p | ForEach-Object {
+                $_.PSObject.Properties | Where-Object{$_.Name -notmatch "^PS"} |
+                ForEach-Object{$snap+="RUN $p $($_.Name)=$($_.Value)"}
+            }
+        }
+    }
+    $svc="HKLM:\SYSTEM\CurrentControlSet\Services"
+    if(Test-Path $svc){
+        Get-ChildItem $svc | ForEach-Object{
+            $n=$_.PSChildName
+            $i=(Get-ItemProperty $_.PSPath -ea 0).ImagePath
+            $s=(Get-ItemProperty $_.PSPath -ea 0).Start
+            $snap+="SERVICE $n Start=$s ImagePath=$i"
+        }
+    }
+    return $snap
+}
+
+$CurrentReg = Get-RegistrySnapshot
+
+if(-not(Test-Path (Join-Path $StateRoot "InstalledApps.txt"))){
+    foreach($k in $Current.Keys){Save-State $k $Current[$k]}
+    Save-RegState "RegistrySnapshot" $CurrentReg
+    "Baseline created at $Timestamp" | Out-File $LogFile
+    exit
+}
+
+Add-Content $LogFile "Startup Audit Log - $Timestamp"
+Add-Content $LogFile "Script: C:\)))_Scripts\Startup-Audit.ps1"
+Add-Content $LogFile "Mode: $(if($CriticalOnly){'CriticalOnly'}else{'Full'})"
+Add-Content $LogFile "====================================================`n"
+
+foreach($k in $Current.Keys){
+    $old=Load-State $k
+    $new=$Current[$k]
+    $crit = $k -in "BIOS","Drivers","Updates","StartupTasks","Services","WindowsFeatures"
+    Compare-Section $k $old $new -Critical:$crit
+}
+
+$OldReg = Load-RegState "RegistrySnapshot"
+$DiffReg = Compare-Object $OldReg $CurrentReg
+if($DiffReg){
+    Add-Content $LogFile "===== REGISTRY SNAPSHOT CHANGES ====="
+    $DiffReg | Out-String | Add-Content $LogFile
+    Add-Content $LogFile ""
+}
+
+$OldDrivers = Load-State "Drivers"
+$NewDrivers = $Current["Drivers"]
+$rollback=@()
+
+foreach($line in $OldDrivers){
+    if($line -match "^(.*)\s+([\d\.]+)$"){
+        $name=$matches[1];$oldv=[version]$matches[2]
+        $newline=$NewDrivers | Where-Object{$_ -like "$name *"}
+        if($newline -and $newline -match "^(.*)\s+([\d\.]+)$"){
+            $newv=[version]$matches[2]
+            if($newv -lt $oldv){$rollback+="$name $oldv -> $newv"}
+        }
+    }
+}
+
+if($rollback){
+    Add-Content $LogFile "===== DRIVER ROLLBACK DETECTED ====="
+    $rollback | Out-String | Add-Content $LogFile
+    Add-Content $LogFile ""
+}
+
+$OldBIOS = Load-State "BIOS"
+$NewBIOS = $Current["BIOS"]
+if($OldBIOS -ne $NewBIOS){
+    Add-Content $LogFile "===== BIOS / FIRMWARE CHANGE DETECTED ====="
+    Add-Content $LogFile "Previous: $($OldBIOS -join '; ')"
+    Add-Content $LogFile "Current : $($NewBIOS -join '; ')`n"
+}
+
+foreach($k in $Current.Keys){Save-State $k $Current[$k]}
+Save-RegState "RegistrySnapshot" $CurrentReg
+
+Add-Content $LogFile "Audit complete."
+✅ 2. CONSOLE DIFF VIEWER
+File: C:\)))_Scripts\Startup-Audit-DiffViewer.ps1
+
+Code
+<#
+    File:    C:\)))_Scripts\Startup-Audit-DiffViewer.ps1
+    Purpose: Console diff viewer for Startup-Audit logs
+#>
+
+param(
+    [Parameter(Mandatory=$true)][string]$Log1,
+    [Parameter(Mandatory=$true)][string]$Log2
+)
+
+if(-not(Test-Path $Log1)){Write-Host "Log1 not found.";pause;exit}
+if(-not(Test-Path $Log2)){Write-Host "Log2 not found.";pause;exit}
+
+$Diff = Compare-Object (Get-Content $Log1) (Get-Content $Log2)
+$Diff | Out-String | more
+
+Write-Host "`n===== End of List ====="
+pause
+exit
+✅ 3. GUI DIFF VIEWER (WinForms)
+File: C:\)))_Scripts\Startup-Audit-DiffGUI.ps1
+
+Code
+<#
+    File:    C:\)))_Scripts\Startup-Audit-DiffGUI.ps1
+    Purpose: GUI diff viewer for Startup-Audit logs with Notepad++ support
+#>
+
+param([switch]$AutoLatest)
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$LogRoot="C:\Startup-Logs"
+
+function Get-LatestTwoLogs {
+    Get-ChildItem $LogRoot -Filter *.txt | Sort-Object LastWriteTime -Descending | Select-Object -First 2
+}
+
+function Show-Diff {
+    param($L1,$L2,$Box)
+    if(-not(Test-Path $L1) -or -not(Test-Path $L2)){
+        $Box.Text="Invalid log paths.";return
+    }
+    $d=Compare-Object (Get-Content $L1) (Get-Content $L2)
+    $Box.Text = ($d | Out-String) + "`r`n===== End of List ====="
+}
+
+function Get-NPP {
+    $p=@("C:\Program Files\Notepad++\notepad++.exe","C:\Program Files (x86)\Notepad++\notepad++.exe")
+    foreach($x in $p){if(Test-Path $x){return $x}}
+    return $null
+}
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text="Startup-Audit Diff Viewer"
+$form.Size=New-Object System.Drawing.Size(1000,700)
+
+$txt1=New-Object System.Windows.Forms.TextBox
+$txt1.Location="10,10";$txt1.Size="850,20"
+$form.Controls.Add($txt1)
+
+$txt2=New-Object System.Windows.Forms.TextBox
+$txt2.Location="10,40";$txt2.Size="850,20"
+$form.Controls.Add($txt2)
+
+$btnCompare=New-Object System.Windows.Forms.Button
+$btnCompare.Text="Compare";$btnCompare.Location="10,70"
+$form.Controls.Add($btnCompare)
+
+$btnLatest=New-Object System.Windows.Forms.Button
+$btnLatest.Text="Latest Two";$btnLatest.Location="100,70"
+$form.Controls.Add($btnLatest)
+
+$btnNPP=New-Object System.Windows.Forms.Button
+$btnNPP.Text="Open in Notepad++";$btnNPP.Location="200,70"
+$form.Controls.Add($btnNPP)
+
+$btnClose=New-Object System.Windows.Forms.Button
+$btnClose.Text="Close";$btnClose.Location="350,70"
+$form.Controls.Add($btnClose)
+
+$box=New-Object System.Windows.Forms.TextBox
+$box.Multiline=$true;$box.ScrollBars="Both"
+$box.Location="10,110";$box.Size="950,520"
+$box.Font="Consolas,9"
+$form.Controls.Add($box)
+
+$btnCompare.Add_Click({Show-Diff $txt1.Text $txt2.Text $box})
+$btnLatest.Add_Click({
+    $l=Get-LatestTwoLogs
+    if($l.Count -ge 2){
+        $txt1.Text=$l[1].FullName
+        $txt2.Text=$l[0].FullName
+        Show-Diff $txt1.Text $txt2.Text $box
+    }
+})
+
+$btnNPP.Add_Click({
+    $n=Get-NPP
+    if($n){
+        if(Test-Path $txt1.Text){Start-Process $n "`"$($txt1.Text)`""}
+        if(Test-Path $txt2.Text){Start-Process $n "`"$($txt2.Text)`""}
+    }
+})
+
+$btnClose.Add_Click({$form.Close()})
+
+if($AutoLatest){
+    $l=Get-LatestTwoLogs
+    if($l.Count -ge 2){
+        $txt1.Text=$l[1].FullName
+        $txt2.Text=$l[0].FullName
+        Show-Diff $txt1.Text $txt2.Text $box
+    }
+}
+
+$form.ShowDialog()
+✅ 4. BATCH WRAPPER FOR GUI
+File: C:\)))_Scripts\Startup-Audit-DiffGUI.cmd
+
+Code
+:: File:    C:\)))_Scripts\Startup-Audit-DiffGUI.cmd
+:: Purpose: Double-click launcher for GUI diff viewer
+
+@echo off
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\)))_Scripts\Startup-Audit-DiffGUI.ps1"
+pause
+✅ 5. TOOLKIT MENU LAUNCHER
+File: C:\)))_Scripts\Toolkit-Launcher.ps1
+
+Code
+<#
+    File:    C:\)))_Scripts\Toolkit-Launcher.ps1
+    Purpose: Menu-driven launcher for technician scripts
+#>
+
+$base="C:\)))_Scripts"
+
+$items=@(
+    @{Id=1;Name="Run Startup Audit";Cmd="powershell -NoProfile -ExecutionPolicy Bypass -File `"$base\Startup-Audit.ps1`""},
+    @{Id=2;Name="Run Startup Audit (CriticalOnly)";Cmd="powershell -NoProfile -ExecutionPolicy Bypass -File `"$base\Startup-Audit.ps1`" -CriticalOnly"},
+    @{Id=3;Name="Diff Viewer (Console)";Cmd="powershell -NoProfile -ExecutionPolicy Bypass -File `"$base\Startup-Audit-DiffViewer.ps1`""},
+    @{Id=4;Name="Diff Viewer (GUI)";Cmd="powershell -NoProfile -ExecutionPolicy Bypass -File `"$base\Startup-Audit-DiffGUI.ps1`""},
+    @{Id=5;Name="Diff Viewer (GUI, Latest Two)";Cmd="powershell -NoProfile -ExecutionPolicy Bypass -File `"$base\Startup-Audit-DiffGUI.ps1`" -AutoLatest"}
+)
+
+while($true){
+    Clear-Host
+    Write-Host "==============================================="
+    Write-Host " Technician Toolkit Launcher"
+    Write-Host " Script: C:\)))_Scripts\Toolkit-Launcher.ps1"
+    Write-Host "==============================================="
+    Write-Host ""
+
+    foreach($i in $items){Write-Host (" {0}. {1}" -f $i.Id,$i.Name)}
+    Write-Host " 0. Exit`n"
+
+    $c=Read-Host "Select"
+    if($c -eq "0"){break}
+
+    $sel=$items | Where-Object{$_.Id -eq [int]$c}
+    if($sel){
+        Clear-Host
+        Write-Host "Running: $($sel.Name)`n"
+        cmd.exe /c $sel.Cmd
+        Write-Host "`n===== End of List ====="
+        pause
+    }
+}
+✅ 6. TASK SCHEDULER XML
+File: C:\)))_Scripts\Startup-Audit-Task.xml
+
+Code
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Startup Audit (C:\)))_Scripts\Startup-Audit.ps1)</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger><Enabled>true</Enabled></LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <RunLevel>HighestAvailable</RunLevel>
+      <LogonType>InteractiveToken</LogonType>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <Enabled>true</Enabled>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-NoProfile -ExecutionPolicy Bypass -File "C:\)))_Scripts\Startup-Audit.ps1" -CriticalOnly</Arguments>
+    </Exec>
+  </Actions>
+</Task>
